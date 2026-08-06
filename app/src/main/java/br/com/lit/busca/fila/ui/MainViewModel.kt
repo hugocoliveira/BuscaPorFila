@@ -7,13 +7,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 // ---------------------------------------------------------------------------
-// ViewModel da tela de leitura de QR Code.
-// Concentra todo o estado e lógica de negócio — os Composables são stateless.
+// ViewModel da tela de leitura de QR Code do BuscaPorFila.
 // ---------------------------------------------------------------------------
 
 /**
  * Rótulos dos campos na ordem exata em que aparecem no QR Code da Fila.
- * Formato do QR: TD;ITD;TDs;St.;TpPr;PArm;Prod;PDO;PDD;DtCo;HrCo
+ * Formato do QR: TD;ITD;TDs;St.;TpPr;PArm;Prod;PDO;PDD;DtCo;HrCo (separador ; diferencia do BuscaPorUC que usa |)
  */
 private val ROTULOS_CAMPOS = listOf(
     "TD", "ITD", "TDs", "St.", "TpPr", "PArm", "Prod", "PDO", "PDD", "DtCo", "HrCo"
@@ -22,12 +21,14 @@ private val ROTULOS_CAMPOS = listOf(
 /**
  * Estado imutável da tela de leitura.
  *
+ * @property campoBusca    texto digitado ou lido pelo scanner.
  * @property campos        lista de pares (rótulo, valor) extraídos do QR Code.
  *                         null enquanto nenhum código foi lido com sucesso.
  * @property scannerAberto true quando o overlay de câmera está visível.
  * @property erro          mensagem de erro ou null se não há erro.
  */
 data class UiState(
+    val campoBusca: String                  = "",
     val campos: List<Pair<String, String>>? = null,
     val scannerAberto: Boolean              = false,
     val erro: String?                       = null
@@ -38,43 +39,50 @@ data class UiState(
  */
 class MainViewModel : ViewModel() {
 
-    /** Estado interno mutável. */
     private val _uiState = MutableStateFlow(UiState())
-
-    /** Estado observável pelos Composables. */
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    // -----------------------------------------------------------------------
-    // Eventos de UI
-    // -----------------------------------------------------------------------
+    /** Atualiza o texto do campo de busca e limpa erros anteriores. */
+    fun onCampoAlterado(texto: String) {
+        _uiState.update { it.copy(campoBusca = texto, erro = null) }
+    }
+
+    /** Limpa campo, resultados e erros. */
+    fun onLimpar() {
+        _uiState.update { UiState() }
+    }
+
+    /** Dispara o parse com o conteúdo atual do campo. */
+    fun onBuscar() {
+        onCodigoEscaneado(_uiState.value.campoBusca)
+    }
 
     /**
-     * Chamado quando a câmera detecta um QR Code.
-     * Faz o parse do conteúdo e fecha o scanner.
+     * Chamado quando a câmera detecta um QR Code ou o usuário confirma o campo.
+     * Faz o parse por ';' e mapeia para os rótulos definidos em [ROTULOS_CAMPOS].
      *
-     * @param codigo valor bruto lido pela câmera (ex: "100000502;1;1;C;Y114;...").
+     * @param codigo valor bruto lido (ex: "100000502;1;1;C;Y114;...").
      */
     fun onCodigoEscaneado(codigo: String) {
         val partes = codigo.split(";")
 
         if (partes.size != ROTULOS_CAMPOS.size) {
-            // QR com número de campos inesperado — exibe erro e mantém scanner fechado
             _uiState.update {
                 it.copy(
+                    campoBusca    = codigo,
                     scannerAberto = false,
-                    erro   = "Dado não encontrado",
-                    campos = null
+                    erro          = "Dado não encontrado",
+                    campos        = null
                 )
             }
             return
         }
 
-        val campos = ROTULOS_CAMPOS.zip(partes)
-
         _uiState.update {
             it.copy(
+                campoBusca    = codigo,
                 scannerAberto = false,
-                campos        = campos,
+                campos        = ROTULOS_CAMPOS.zip(partes),
                 erro          = null
             )
         }

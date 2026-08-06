@@ -19,7 +19,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
@@ -30,6 +33,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -47,6 +51,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -61,18 +67,16 @@ private const val TAG = "MainScreen"
 
 // ---------------------------------------------------------------------------
 // Tela principal do BuscaPorFila.
-// Exibe a câmera imediatamente ao abrir. Após leitura, exibe os campos do QR.
-// O usuário não pode digitar texto — apenas escanear.
+// O usuário pode digitar o código no campo de texto ou escanear o QR Code.
 // ---------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
-fun MainScreen(
-    viewModel: MainViewModel = viewModel()
-) {
+fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     val context        = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val permissaoCamera = rememberPermissionState(Manifest.permission.CAMERA)
 
     // Toca error.wav sempre que uiState.erro mudar para não-nulo
     LaunchedEffect(uiState.erro) {
@@ -83,59 +87,29 @@ fun MainScreen(
         }
     }
 
-    val permissaoCamera = rememberPermissionState(Manifest.permission.CAMERA)
-
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        text  = stringResource(R.string.titulo_tela),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+                title  = { Text(stringResource(R.string.titulo_tela), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimary) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primary)
             )
         }
     ) { paddingValues ->
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
+        Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
             ConteudoPrincipal(
-                uiState        = uiState,
-                onAbrirScanner = {
-                    if (permissaoCamera.status.isGranted) {
-                        viewModel.onAbrirScanner()
-                    } else {
-                        permissaoCamera.launchPermissionRequest()
-                    }
+                uiState         = uiState,
+                onCampoAlterado = viewModel::onCampoAlterado,
+                onBuscar        = viewModel::onBuscar,
+                onLimpar        = viewModel::onLimpar,
+                onAbrirScanner  = {
+                    if (permissaoCamera.status.isGranted) viewModel.onAbrirScanner()
+                    else permissaoCamera.launchPermissionRequest()
                 }
             )
-
-            // Overlay de câmera — sobrepõe o conteúdo quando o scanner está aberto
-            AnimatedVisibility(
-                visible = uiState.scannerAberto && permissaoCamera.status.isGranted,
-                enter   = fadeIn(),
-                exit    = fadeOut()
-            ) {
-                ScannerOverlay(
-                    onCodigoLido   = viewModel::onCodigoEscaneado,
-                    onFechar       = viewModel::onFecharScanner,
-                    lifecycleOwner = lifecycleOwner,
-                    context        = context
-                )
+            AnimatedVisibility(visible = uiState.scannerAberto && permissaoCamera.status.isGranted, enter = fadeIn(), exit = fadeOut()) {
+                ScannerOverlay(onCodigoLido = viewModel::onCodigoEscaneado, onFechar = viewModel::onFecharScanner, lifecycleOwner = lifecycleOwner, context = context)
             }
-
-            // Solicita permissão automaticamente se o scanner abriu sem permissão concedida
-            if (uiState.scannerAberto && !permissaoCamera.status.isGranted) {
-                permissaoCamera.launchPermissionRequest()
-            }
+            if (uiState.scannerAberto && !permissaoCamera.status.isGranted) permissaoCamera.launchPermissionRequest()
         }
     }
 }
@@ -143,204 +117,121 @@ fun MainScreen(
 @Composable
 private fun ConteudoPrincipal(
     uiState: UiState,
+    onCampoAlterado: (String) -> Unit,
+    onBuscar: () -> Unit,
+    onLimpar: () -> Unit,
     onAbrirScanner: () -> Unit
 ) {
-    LazyColumn(
-        modifier            = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(0.dp)
-    ) {
+    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+
+        // Campo de texto + botão Buscar
+        item {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
+                OutlinedTextField(
+                    value         = uiState.campoBusca,
+                    onValueChange = onCampoAlterado,
+                    modifier      = Modifier.fillMaxWidth(),
+                    label         = { Text(stringResource(R.string.label_campo_busca)) },
+                    placeholder   = { Text(stringResource(R.string.placeholder_campo_busca)) },
+                    singleLine    = true,
+                    shape         = RoundedCornerShape(12.dp),
+                    trailingIcon  = {
+                        if (uiState.campoBusca.isNotEmpty()) {
+                            IconButton(onClick = onLimpar) {
+                                Icon(Icons.Default.Clear, stringResource(R.string.botao_limpar), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            IconButton(onClick = onAbrirScanner) {
+                                Icon(Icons.Default.QrCodeScanner, stringResource(R.string.descricao_icone_scanner), tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { onBuscar() })
+                )
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick  = onBuscar,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled  = uiState.campoBusca.isNotBlank(),
+                    shape    = RoundedCornerShape(8.dp)
+                ) {
+                    Text(stringResource(R.string.botao_buscar), style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+
         // Banner de erro
         if (uiState.erro != null) {
             item {
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    shape  = RoundedCornerShape(6.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    shape    = RoundedCornerShape(6.dp),
+                    colors   = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
-                    Text(
-                        text     = uiState.erro,
-                        style    = MaterialTheme.typography.bodyMedium,
-                        color    = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.padding(12.dp)
-                    )
+                    Text(uiState.erro, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(12.dp))
                 }
-                Spacer(modifier = Modifier.height(8.dp))
             }
         }
 
-        // Card com os campos lidos do QR Code
+        // Card de resultados
         if (!uiState.campos.isNullOrEmpty()) {
             item {
                 Card(
-                    modifier  = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                    modifier  = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                     shape     = RoundedCornerShape(6.dp),
-                    colors    = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
+                    colors    = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        uiState.campos.forEachIndexed { indice, (rotulo, valor) ->
-                            if (indice > 0) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(vertical = 4.dp),
-                                    color    = MaterialTheme.colorScheme.outline
-                                )
-                            }
-                            CampoLinha(rotulo = rotulo, valor = valor)
+                        uiState.campos.forEachIndexed { i, (rotulo, valor) ->
+                            if (i > 0) HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline)
+                            CampoLinha(rotulo, valor)
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
             }
         }
 
-        // Ícone + texto de espera — exibido antes do primeiro scan sem erro
-        if (uiState.campos == null && uiState.erro == null) {
+        // Estado inicial — nenhum dado lido ainda
+        if (uiState.campos == null && uiState.erro == null && uiState.campoBusca.isEmpty()) {
             item {
-                Box(
-                    modifier         = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 48.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(modifier = Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector        = Icons.Default.QrCodeScanner,
-                            contentDescription = null,
-                            tint               = MaterialTheme.colorScheme.primary,
-                            modifier           = Modifier
-                                .width(64.dp)
-                                .height(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text  = stringResource(R.string.aguardando_leitura),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Icon(Icons.Default.QrCodeScanner, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.width(64.dp).height(64.dp))
+                        Spacer(Modifier.height(16.dp))
+                        Text(stringResource(R.string.aguardando_leitura), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                Spacer(modifier = Modifier.height(24.dp))
             }
         }
 
-        // Botão escanear / escanear novamente
-        item {
-            Button(
-                onClick  = onAbrirScanner,
-                modifier = Modifier.fillMaxWidth(),
-                shape    = RoundedCornerShape(8.dp)
-            ) {
-                Icon(
-                    imageVector        = Icons.Default.QrCodeScanner,
-                    contentDescription = null
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text  = if (uiState.campos != null)
-                                stringResource(R.string.botao_escanear_novamente)
-                            else
-                                stringResource(R.string.botao_escanear),
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
-        }
+        item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
-/**
- * Uma linha do card de resultados exibindo o rótulo do campo e seu valor.
- *
- * @param rotulo nome do campo (ex: "TD", "ITD").
- * @param valor  conteúdo do campo lido do QR Code.
- */
 @Composable
 private fun CampoLinha(rotulo: String, valor: String) {
-    Row(
-        modifier          = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text       = "$rotulo:",
-            style      = MaterialTheme.typography.bodySmall,
-            color      = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.SemiBold,
-            modifier   = Modifier.width(60.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text     = valor,
-            style    = MaterialTheme.typography.bodyMedium,
-            color    = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f)
-        )
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("$rotulo:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(60.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(valor, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
     }
 }
 
-/**
- * Overlay de câmera que cobre a tela inteira.
- * Chama [onCodigoLido] apenas uma vez por abertura (guarda em [jaLeu]).
- */
 @Composable
-private fun ScannerOverlay(
-    onCodigoLido: (String) -> Unit,
-    onFechar: () -> Unit,
-    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
-    context: android.content.Context
-) {
+private fun ScannerOverlay(onCodigoLido: (String) -> Unit, onFechar: () -> Unit, lifecycleOwner: androidx.lifecycle.LifecycleOwner, context: android.content.Context) {
     val executorRef = remember { mutableListOf<ExecutorService>() }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            executorRef.firstOrNull()?.shutdown()
-            executorRef.clear()
-            Log.d(TAG, "Executor da câmera encerrado.")
-        }
-    }
-
+    DisposableEffect(Unit) { onDispose { executorRef.firstOrNull()?.shutdown(); executorRef.clear(); Log.d(TAG, "Executor da câmera encerrado.") } }
     val jaLeu = remember { mutableStateOf(false) }
-
     Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { ctx ->
-                val previewView = PreviewView(ctx)
-                val executor = iniciarScanner(
-                    context        = context,
-                    lifecycleOwner = lifecycleOwner,
-                    previewView    = previewView,
-                    onCodigoLido   = { codigo ->
-                        if (!jaLeu.value) {
-                            jaLeu.value = true
-                            onCodigoLido(codigo)
-                        }
-                    }
-                )
-                executorRef.add(executor)
-                previewView
-            },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        IconButton(
-            onClick  = onFechar,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp)
-        ) {
-            Icon(
-                imageVector        = Icons.Default.Close,
-                contentDescription = stringResource(R.string.fechar_scanner),
-                tint               = MaterialTheme.colorScheme.onPrimary
-            )
+        AndroidView(factory = { ctx ->
+            val pv = PreviewView(ctx)
+            executorRef.add(iniciarScanner(context, lifecycleOwner, pv) { codigo -> if (!jaLeu.value) { jaLeu.value = true; onCodigoLido(codigo) } })
+            pv
+        }, modifier = Modifier.fillMaxSize())
+        IconButton(onClick = onFechar, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
+            Icon(Icons.Default.Close, stringResource(R.string.fechar_scanner), tint = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }
