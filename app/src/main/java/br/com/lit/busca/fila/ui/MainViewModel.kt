@@ -80,7 +80,7 @@ class MainViewModel : ViewModel() {
 
         _uiState.update {
             it.copy(
-                campoBusca    = codigo,
+                campoBusca    = "",
                 scannerAberto = false,
                 campos        = ROTULOS_CAMPOS.zip(partes),
                 erro          = null
